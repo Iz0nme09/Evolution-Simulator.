@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Evolution Simulator - Speed & Creature Details</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
+
+  body, html {
+    margin: 0; padding: 0; overflow: hidden;
+    background: #111;
+    font-family: 'JetBrains Mono', monospace;
+    color: #eee;
+  }
+  canvas {
+    display: block;
+    background: radial-gradient(circle at center, #222 0%, #111 80%);
+  }
+
+  #vignette {
+    position: fixed;
+    top: 0; left: 0; width: 100vw; height: 100vh;
+    pointer-events: none;
+    background: radial-gradient(ellipse at center, rgba(0,0,0,0) 50%, rgba(0,0,0,0.6) 90%);
+    z-index: 5;
+  }
+
+  #info {
+    position: absolute; top: 10px; left: 10px;
+    background: rgba(0, 0, 0, 0.7);
+    padding: 10px 16px;
+    border-radius: 12px;
+    box-shadow: 0 0 15px #0ff;
+    font-size: 16px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    user-select: none;
+    z-index: 20;
+  }
+  #info span {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  #info span svg {
+    width: 20px; height: 20px;
+    fill: #0ff;
+  }
+
+  #statsContainer {
+    position: absolute;
+    bottom: 10px;
+    left: 10px;
+    width: 350px;
+    background: rgba(20, 20, 20, 0.85);
+    border-radius: 14px;
+    box-shadow: 0 0 20px rgba(0, 255, 255, 0.4);
+    padding: 14px 16px 10px 16px;
+    user-select: none;
+    transition: transform 0.4s ease, opacity 0.4s ease;
+    z-index: 15;
+  }
+
+  #statsContainer.hidden {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(40px);
+  }
+
+  #statsTitle {
+    color: #0ff;
+    font-weight: 700;
+    font-size: 18px;
+    margin-bottom: 8px;
+    text-align: center;
+    letter-spacing: 1.3px;
+  }
+
+  #statsCanvas {
+    width: 100%;
+    height: 160px;
+    display: block;
+    border-radius: 10px;
+    background: rgba(10,10,10,0.7);
+    box-shadow: inset 0 0 10px #0ff99;
+    cursor: default;
+  }
+
+  .controlBtn {
+    position: absolute;
+    left: 10px;
+    background: rgba(0, 255, 255, 0.85);
+    border: none;
+    border-radius: 20px;
+    padding: 8px 14px;
+    color: #111;
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: 0 0 12px #0ff;
+    user-select: none;
+    z-index: 21;
+    transition: background-color 0.3s ease;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .controlBtn:hover {
+    background-color: #0ff;
+  }
+  #toggleStatsBtn {
+    bottom: 160px;
+  }
+  #speedBtn {
+    bottom: 210px;
+  }
+  #cullBtn {
+    bottom: 260px;
+  }
+  #resetBtn {
+    bottom: 310px;
+  }
+
+  #creatureDetails {
+    position: absolute;
+    background: rgba(0,0,0,0.85);
+    border-radius: 12px;
+    padding: 14px 18px;
+    color: #0ff;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    pointer-events: none;
+    box-shadow: 0 0 15px #0ff;
+    z-index: 30;
+    max-width: 220px;
+    line-height: 1.3;
+    display: none;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="canvas"></canvas>
+
+<div id="info" aria-label="Game information panel" role="region">
+  <span title="Current Creature Population">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3"/><path d="M6 21v-2a4 4 0 0 1 8 0v2"/></svg>
+    <span id="popCount">0</span>
+  </span>
+  <span title="Amount of Food on the field">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" stroke="#0f0" stroke-width="2" fill="none"/></svg>
+    <span id="foodCount">0</span>
+  </span>
+  <span title="Current Generation Count">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="6 9 12 15 18 9" stroke="#0ff" stroke-width="2" fill="none" stroke-linejoin="round"/></svg>
+    <span id="generationCount">0</span>
+  </span>
+</div>
+
+<div id="statsContainer" aria-label="Statistics graphs panel" role="region">
+  <div id="statsTitle">Evolution Stats</div>
+  <canvas id="statsCanvas" width="320" height="160" aria-describedby="statsDesc"></canvas>
+  <div id="statsDesc" style="position:absolute;left:-9999px;">Graphs showing population, average size and average energy over time</div>
+</div>
+
+<button id="toggleStatsBtn" aria-pressed="true" aria-label="Toggle stats panel" class="controlBtn">Stats</button>
+<button id="speedBtn" aria-pressed="false" aria-label="Toggle simulation speed" class="controlBtn">Speed: 1x</button>
+<button id="cullBtn" aria-pressed="false" aria-label="Cull Population" class="controlBtn">Cull Population</button>
+<button id="resetBtn" aria-pressed="false" aria-label="Reset Simulation" class="controlBtn">Reset</button>
+
+<div id="vignette"></div>
+
+<div id="creatureDetails" role="tooltip"></div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  const info = document.getElementById('info');
+  const popCountSpan = document.getElementById('popCount');
+  const foodCountSpan = document.getElementById('foodCount');
+  const generationCountSpan = document.getElementById('generationCount');
+  const statsContainer = document.getElementById('statsContainer');
+  const statsCanvas = document.getElementById('statsCanvas');
+  const statsCtx = statsCanvas.getContext('2d');
+  const toggleStatsBtn = document.getElementById('toggleStatsBtn');
+  const speedBtn = document.getElementById('speedBtn');
+  const cullBtn = document.getElementById('cullBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const creatureDetails = document.getElementById('creatureDetails');
+
+  let W, H;
+  function resize() {
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = W;
+    canvas.height = H;
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  let simulationSpeed = 1; // normal speed (1x)
+  let generationCount = 0;
+
+  class Creature {
+    constructor(x, y, size, speed, color, energy) {
+      this.x = x;
+      this.y = y;
+      this.baseSize = size;
+      this.size = size;
+      this.speed = Math.max(0.5, speed);
+      this.colorHue = this.getHueFromColor(color);
+      this.colorSaturation = 70;
+      this.colorLightness = 60;
+      this.energy = energy;
+      this.dir = Math.random() * Math.PI * 2;
+      this.reproduceCooldown = 0;
+      this.pulsePhase = Math.random() * Math.PI * 2;
+      this.hueShift = 0;
+      this.age = 0;
+    }
+
+    move() {
+      this.dir += (Math.random() - 0.5) * 0.3;
+      this.x += Math.cos(this.dir) * this.speed * simulationSpeed;
+      this.y += Math.sin(this.dir) * this.speed * simulationSpeed;
+
+      if (this.x < this.size) {
+        this.x = this.size;
+        this.dir = Math.PI - this.dir;
+      } else if (this.x > W - this.size) {
+        this.x = W - this.size;
+        this.dir = Math.PI - this.dir;
+      }
+      if (this.y < this.size) {
+        this.y = this.size;
+        this.dir = -this.dir;
+      } else if (this.y > H - this.size) {
+        this.y = H - this.size;
+        this.dir = -this.dir;
+      }
+    }
+
+    draw() {
+      const maxEnergy = 40;
+      const glowIntensity = Math.min(1, this.energy / maxEnergy);
+
+      this.pulsePhase += 0.05;
+      this.size = this.baseSize * (1 + 0.15 * Math.sin(this.pulsePhase));
+
+      this.hueShift += 0.3;
+      const hue = (this.colorHue + this.hueShift) % 360;
+      const color = `hsl(${hue}, ${this.colorSaturation}%, ${this.colorLightness}%)`;
+
+      ctx.beginPath();
+      ctx.fillStyle = color;
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 15 * glowIntensity;
+      ctx.globalAlpha = 0.6 + 0.4 * glowIntensity;
+      ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = 1;
+    }
+
+    update() {
+      this.move();
+      this.energy -= 0.004 * this.baseSize * simulationSpeed;
+      this.age += simulationSpeed;
+
+      if(this.reproduceCooldown > 0) {
+        this.reproduceCooldown -= simulationSpeed;
+      }
+    }
+
+    canReproduce() {
+      return this.energy > 25 && this.reproduceCooldown <= 0;
+    }
+
+    reproduce() {
+      this.energy /= 2;
+      this.reproduceCooldown = 100;
+
+      const mutation = (val, range) => Math.max(1, val + (Math.random() - 0.5) * range);
+
+      const childSize = mutation(this.baseSize, 1);
+      const childSpeed = mutation(this.speed, 0.3);
+
+      const newHue = (this.colorHue + (Math.random() - 0.5) * 30 + 360) % 360;
+
+      return new Creature(
+        this.x + (Math.random() - 0.5) * this.baseSize * 2,
+        this.y + (Math.random() - 0.5) * this.baseSize * 2,
+        childSize,
+        childSpeed,
+        `hsl(${newHue}, 70%, 60%)`,
+        this.energy
+      );
+    }
+
+    getHueFromColor(colorStr) {
+      const match = colorStr.match(/hsl\((\d+),\s*\d+%,\s*\d+%\)/);
+      if (match) return parseInt(match[1]);
+      return 0;
+    }
+
+    eat(food) {
+      this.energy += food.energy;
+    }
+
+    isDead() {
+      return this.energy <= 0;
+    }
+  }
+
+  class Food {
+    constructor(x, y) {
+      this.x = x;
+      this.y = y;
+      this.baseSize = 3;
+      this.size = 3;
+      this.energy = 10;
+      this.pulsePhase = Math.random() * Math.PI * 2;
+    }
+
+    draw() {
+      this.pulsePhase += 0.07;
+      this.size = this.baseSize * (1 + 0.3 * Math.sin(this.pulsePhase));
+
+      ctx.beginPath();
+      ctx.fillStyle = 'lime';
+      ctx.shadowColor = 'lime';
+      ctx.shadowBlur = 12 * (this.size / this.baseSize);
+      ctx.globalAlpha = 0.7 + 0.3 * Math.sin(this.pulsePhase);
+      ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  let creatures = [];
+  let foods = [];
+
+  function initSimulation() {
+    creatures = [];
+    foods = [];
+    generationCount = 0;
+    for(let i = 0; i < 40; i++) {
+      const size = 6 + Math.random() * 6;
+      const speed = 0.5 + Math.random() * 1.5;
+      const hue = Math.random() * 360;
+      const color = `hsl(${hue}, 70%, 60%)`;
+      const x = Math.random() * W;
+      const y = Math.random() * H;
+      const energy = 30 + Math.random() * 10;
+      creatures.push(new Creature(x, y, size, speed, color, energy));
+    }
+    spawnFood();
+  }
+
+  function spawnFood() {
+    if (foods.length < 150) {
+      for(let i=0; i<12; i++) {
+        foods.push(new Food(Math.random()*W, Math.random()*H));
+      }
+    }
+  }
+
+  // Stats arrays to hold recent history for graphing
+  const statsHistoryLength = 300;
+  const populationHistory = [];
+  const avgSizeHistory = [];
+  const avgEnergyHistory = [];
+
+  function updateStats() {
+    const pop = creatures.length;
+    let sizeSum = 0;
+    let energySum = 0;
+    for(const c of creatures) {
+      sizeSum += c.baseSize;
+      energySum += c.energy;
+    }
+    const avgSize = pop > 0 ? sizeSum / pop : 0;
+    const avgEnergy = pop > 0 ? energySum / pop : 0;
+
+    populationHistory.push(pop);
+    avgSizeHistory.push(avgSize);
+    avgEnergyHistory.push(avgEnergy);
+    if(populationHistory.length > statsHistoryLength) populationHistory.shift();
+    if(avgSizeHistory.length > statsHistoryLength) avgSizeHistory.shift();
+    if(avgEnergyHistory.length > statsHistoryLength) avgEnergyHistory.shift();
+  }
+
+  function drawGrid(ctx, w, h, rows, cols) {
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for(let r=0; r<=rows; r++) {
+      const y = (r/rows)*h;
+      ctx.moveTo(0,y);
+      ctx.lineTo(w,y);
+    }
+    for(let c=0; c<=cols; c++) {
+      const x = (c/cols)*w;
+      ctx.moveTo(x,0);
+      ctx.lineTo(x,h);
+    }
+    ctx.stroke();
+  }
+
+  function smoothLine(ctx, data, maxVal, w, h) {
+    ctx.beginPath();
+    const len = data.length;
+    for (let i = 0; i < len; i++) {
+      const x = (i / (len - 1)) * w;
+      const y = h - (data[i] / maxVal) * h;
+      if (i === 0) {
+        ctx.moveTo(x, y);
+      } else {
+        const prevX = ((i - 1) / (len - 1)) * w;
+        const prevY = h - (data[i - 1] / maxVal) * h;
+        const cpx = (prevX + x) / 2;
+        const cpy = (prevY + y) / 2;
+        ctx.quadraticCurveTo(prevX, prevY, cpx, cpy);
+      }
+    }
+    ctx.stroke();
+  }
+
+  function drawStats() {
+    const w = statsCanvas.width;
+    const h = statsCanvas.height;
+    statsCtx.clearRect(0, 0, w, h);
+
+    statsCtx.fillStyle = 'rgba(20,20,20,0.7)';
+    statsCtx.fillRect(0, 0, w, h);
+
+    drawGrid(statsCtx, w, h, 4, 6);
+
+    const maxPop = Math.max(...populationHistory, 50);
+    const maxSize = Math.max(...avgSizeHistory, 15);
+    const maxEnergy = Math.max(...avgEnergyHistory, 40);
+
+    statsCtx.fillStyle = '#888';
+    statsCtx.font = '11px monospace';
+    statsCtx.fillText('Max', 0, 12);
+    statsCtx.fillText('0', 0, h-4);
+
+    const legendItems = [
+      {color:'cyan', label:'Population', value:populationHistory[populationHistory.length-1]},
+      {color:'orange', label:'Avg Size', value:avgSizeHistory[avgSizeHistory.length-1]},
+      {color:'lime', label:'Avg Energy', value:avgEnergyHistory[avgEnergyHistory.length-1]},
+    ];
+    let lx = 8, ly = 20;
+    for(const item of legendItems) {
+      statsCtx.fillStyle = item.color;
+      statsCtx.fillRect(lx, ly-10, 12, 8);
+      statsCtx.fillStyle = '#eee';
+      statsCtx.fillText(`${item.label}: ${item.value.toFixed(1)}`, lx + 16, ly);
+      ly += 18;
+    }
+
+    statsCtx.lineWidth = 2;
+
+    statsCtx.strokeStyle = 'cyan';
+    smoothLine(statsCtx, populationHistory, maxPop, w, h);
+
+    statsCtx.strokeStyle = 'orange';
+    smoothLine(statsCtx, avgSizeHistory, maxSize, w, h);
+
+    statsCtx.strokeStyle = 'lime';
+    smoothLine(statsCtx, avgEnergyHistory, maxEnergy, w, h);
+  }
+
+  // Main loop and variables
+  let selectedCreature = null;
+
+  function loop() {
+    ctx.clearRect(0, 0, W, H);
+
+    // Update and draw creatures
+    for(let i = creatures.length - 1; i >= 0; i--) {
+      const c = creatures[i];
+      c.update();
+
+      // Eat food
+      for(let j = foods.length - 1; j >= 0; j--) {
+        const f = foods[j];
+        const dx = c.x - f.x;
+        const dy = c.y - f.y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        if(dist < c.size + f.size) {
+          c.eat(f);
+          foods.splice(j,1);
+          break;
+        }
+      }
+
+      if(c.canReproduce()) {
+        creatures.push(c.reproduce());
+        generationCount++;
+      }
+
+      if(c.isDead()) {
+        creatures.splice(i,1);
+        if (selectedCreature === c) {
+          selectedCreature = null;
+          creatureDetails.style.display = 'none';
+        }
+        continue;
+      }
+
+      c.draw();
+    }
+
+    // Draw food AFTER creatures to keep visible on top
+    for (const f of foods) {
+      f.draw();
+    }
+
+    if(Math.random() < 0.35 * simulationSpeed) spawnFood();
+
+    updateStats();
+    drawStats();
+
+    popCountSpan.textContent = creatures.length;
+    foodCountSpan.textContent = foods.length;
+    generationCountSpan.textContent = generationCount;
+
+    requestAnimationFrame(loop);
+  }
+
+  // Toggle stats panel
+  toggleStatsBtn.addEventListener('click', () => {
+    const hidden = statsContainer.classList.toggle('hidden');
+    toggleStatsBtn.setAttribute('aria-pressed', !hidden);
+  });
+
+  // Speed toggle button
+  speedBtn.addEventListener('click', () => {
+    if(simulationSpeed === 1) {
+      simulationSpeed = 3;
+      speedBtn.textContent = 'Speed: 3x';
+      speedBtn.setAttribute('aria-pressed', 'true');
+    } else {
+      simulationSpeed = 1;
+      speedBtn.textContent = 'Speed: 1x';
+      speedBtn.setAttribute('aria-pressed', 'false');
+    }
+  });
+
+  // Cull population button
+  cullBtn.addEventListener('click', () => {
+    if (creatures.length <= 2) return; // don't cull if too few
+
+    // Sort creatures by age descending (oldest first)
+    creatures.sort((a,b) => b.age - a.age);
+
+    const half = Math.floor(creatures.length / 2);
+    // Remove oldest half
+    creatures.splice(0, half);
+
+    // Hide details if selected creature was culled
+    if(selectedCreature && !creatures.includes(selectedCreature)) {
+      selectedCreature = null;
+      creatureDetails.style.display = 'none';
+    }
+  });
+
+  // Reset simulation button
+  resetBtn.addEventListener('click', () => {
+    selectedCreature = null;
+    creatureDetails.style.display = 'none';
+    initSimulation();
+  });
+
+  // Show creature details on click
+  canvas.addEventListener('click', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+
+    let found = null;
+    for(const c of creatures) {
+      const dx = c.x - mx;
+      const dy = c.y - my;
+      if(Math.sqrt(dx*dx + dy*dy) < c.size) {
+        found = c;
+        break;
+      }
+    }
+
+    if(found) {
+      selectedCreature = found;
+      showCreatureDetails(e.pageX, e.pageY, selectedCreature);
+    } else {
+      selectedCreature = null;
+      creatureDetails.style.display = 'none';
+    }
+  });
+
+  function showCreatureDetails(pageX, pageY, creature) {
+    const html = `
+      <div><strong>Creature Details</strong></div>
+      <div>Age: ${Math.floor(creature.age)}</div>
+      <div>Size: ${creature.baseSize.toFixed(2)}</div>
+      <div>Speed: ${creature.speed.toFixed(2)}</div>
+      <div>Energy: ${creature.energy.toFixed(2)}</div>
+    `;
+    creatureDetails.innerHTML = html;
+    creatureDetails.style.display = 'block';
+
+    // Position near cursor but keep inside viewport
+    const padding = 10;
+    const width = creatureDetails.offsetWidth;
+    const height = creatureDetails.offsetHeight;
+    let left = pageX + padding;
+    let top = pageY + padding;
+    if(left + width > window.innerWidth) left = pageX - width - padding;
+    if(top + height > window.innerHeight) top = pageY - height - padding;
+
+    creatureDetails.style.left = left + 'px';
+    creatureDetails.style.top = top + 'px';
+  }
+
+  // Hide creature details if user scrolls or resizes
+  window.addEventListener('scroll', () => {
+    creatureDetails.style.display = 'none';
+    selectedCreature = null;
+  });
+  window.addEventListener('resize', () => {
+    creatureDetails.style.display = 'none';
+    selectedCreature = null;
+  });
+
+  initSimulation();
+  loop();
+})();
+</script>
+
+</body>
+</html>
+
